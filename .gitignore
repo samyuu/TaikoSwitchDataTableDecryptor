@@ -21,9 +21,14 @@
 x64/
 x86/
 bld/
+bin/
+bin-int/
 [Bb]in/
 [Oo]bj/
 [Ll]og/
+
+# Temp test files
+TaikoSwitchDataTableDecryptor/test/
 
 # Visual Studio 2015/2017 cache/options directory
 .vs/
