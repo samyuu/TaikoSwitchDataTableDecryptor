@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio 15
+VisualStudioVersion = 15.0.28307.1525
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "TaikoSwitchDataTableDecryptor", "TaikoSwitchDataTableDecryptor\TaikoSwitchDataTableDecryptor.vcxproj", "{2A0F9E61-C7B2-497B-B587-C580E0C17110}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "zlib", "Dependencies\zlib\zlib.vcxproj", "{164A9D43-345C-407B-BF59-527386DED788}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Dependencies", "Dependencies", "{EE11261E-85ED-4445-AB6F-5C4F55B4E34B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{2A0F9E61-C7B2-497B-B587-C580E0C17110}.Debug|x64.ActiveCfg = Debug|x64
+		{2A0F9E61-C7B2-497B-B587-C580E0C17110}.Debug|x64.Build.0 = Debug|x64
+		{2A0F9E61-C7B2-497B-B587-C580E0C17110}.Release|x64.ActiveCfg = Release|x64
+		{2A0F9E61-C7B2-497B-B587-C580E0C17110}.Release|x64.Build.0 = Release|x64
+		{164A9D43-345C-407B-BF59-527386DED788}.Debug|x64.ActiveCfg = Debug|x64
+		{164A9D43-345C-407B-BF59-527386DED788}.Debug|x64.Build.0 = Debug|x64
+		{164A9D43-345C-407B-BF59-527386DED788}.Release|x64.ActiveCfg = Release|x64
+		{164A9D43-345C-407B-BF59-527386DED788}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{164A9D43-345C-407B-BF59-527386DED788} = {EE11261E-85ED-4445-AB6F-5C4F55B4E34B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {32848A13-A06E-49EA-B024-22472419BF2F}
+	EndGlobalSection
+EndGlobal
