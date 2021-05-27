@@ -47,7 +47,13 @@ namespace PeepoHappy
 	namespace Crypto
 	{
 		constexpr size_t Aes128KeySize = 16;
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128KeySize> iv);
+		constexpr size_t Aes128IVSize = 16;
+		constexpr size_t Aes128Alignment = 16;
+
+		constexpr size_t Align(size_t value, size_t alignment) { return (value + (alignment - 1)) & ~(alignment - 1); }
+
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv);
+		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv);
 	}
 
 	namespace Compression

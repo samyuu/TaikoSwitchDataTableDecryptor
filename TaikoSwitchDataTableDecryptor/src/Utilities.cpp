@@ -172,67 +172,94 @@ namespace PeepoHappy
 
 	namespace Crypto
 	{
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128KeySize> iv)
+		namespace Detail
 		{
-			bool successful = false;
-			::NTSTATUS status = {};
-			::BCRYPT_ALG_HANDLE algorithmHandle = {};
+			enum class Operation { Decrypt, Encrypt };
 
-			status = ::BCryptOpenAlgorithmProvider(&algorithmHandle, BCRYPT_AES_ALGORITHM, nullptr, 0);
-			if (NT_SUCCESS(status))
+			bool BCryptAes128Cbc(Operation operation, const u8* inData, size_t inDataSize, u8* outData, size_t outDataSize, u8* key, u8* iv)
 			{
-				status = ::BCryptSetProperty(algorithmHandle, BCRYPT_CHAINING_MODE, reinterpret_cast<PBYTE>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)), sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
+				bool successful = false;
+				::NTSTATUS status = {};
+				::BCRYPT_ALG_HANDLE algorithmHandle = {};
+
+				status = ::BCryptOpenAlgorithmProvider(&algorithmHandle, BCRYPT_AES_ALGORITHM, nullptr, 0);
 				if (NT_SUCCESS(status))
 				{
-					ULONG keyObjectSize = {};
-					ULONG copiedDataSize = {};
-
-					status = ::BCryptGetProperty(algorithmHandle, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PBYTE>(&keyObjectSize), sizeof(ULONG), &copiedDataSize, 0);
+					status = ::BCryptSetProperty(algorithmHandle, BCRYPT_CHAINING_MODE, reinterpret_cast<PBYTE>(const_cast<wchar_t*>(BCRYPT_CHAIN_MODE_CBC)), sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
 					if (NT_SUCCESS(status))
 					{
-						::BCRYPT_KEY_HANDLE symmetricKeyHandle = {};
-						auto keyObject = std::make_unique<u8[]>(keyObjectSize);
+						ULONG keyObjectSize = {};
+						ULONG copiedDataSize = {};
 
-						status = ::BCryptGenerateSymmetricKey(algorithmHandle, &symmetricKeyHandle, keyObject.get(), keyObjectSize, key.data(), static_cast<ULONG>(key.size()), 0);
+						status = ::BCryptGetProperty(algorithmHandle, BCRYPT_OBJECT_LENGTH, reinterpret_cast<PBYTE>(&keyObjectSize), sizeof(ULONG), &copiedDataSize, 0);
 						if (NT_SUCCESS(status))
 						{
-							status = ::BCryptDecrypt(symmetricKeyHandle, const_cast<u8*>(inEncryptedData), static_cast<ULONG>(inOutDataSize), nullptr, iv.data(), static_cast<ULONG>(iv.size()), outDecryptedData, static_cast<ULONG>(inOutDataSize), &copiedDataSize, 0);
+							::BCRYPT_KEY_HANDLE symmetricKeyHandle = {};
+							auto keyObject = std::make_unique<u8[]>(keyObjectSize);
+
+							status = ::BCryptGenerateSymmetricKey(algorithmHandle, &symmetricKeyHandle, keyObject.get(), keyObjectSize, key, static_cast<ULONG>(Aes128KeySize), 0);
 							if (NT_SUCCESS(status))
 							{
-								successful = true;
+								if (operation == Operation::Decrypt)
+								{
+									status = ::BCryptDecrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(Aes128IVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
+									if (NT_SUCCESS(status))
+										successful = true;
+									else
+										fprintf(stderr, "BCryptDecrypt() failed with 0x%X\n", status);
+								}
+								else if (operation == Operation::Encrypt)
+								{
+									status = ::BCryptEncrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(Aes128IVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
+									if (NT_SUCCESS(status))
+										successful = true;
+									else
+										fprintf(stderr, "BCryptEncrypt() failed with 0x%X\n", status);
+								}
+								else
+								{
+									assert(false);
+								}
+
+								if (symmetricKeyHandle)
+									::BCryptDestroyKey(symmetricKeyHandle);
 							}
 							else
 							{
-								fprintf(stderr, "BCryptDecrypt() failed with 0x%X", status);
+								fprintf(stderr, "BCryptGenerateSymmetricKey() failed with 0x%X\n", status);
 							}
-
-							if (symmetricKeyHandle)
-								::BCryptDestroyKey(symmetricKeyHandle);
 						}
 						else
 						{
-							fprintf(stderr, "BCryptGenerateSymmetricKey() failed with 0x%X", status);
+							fprintf(stderr, "BCryptGetProperty(BCRYPT_OBJECT_LENGTH) failed with 0x%X\n", status);
 						}
 					}
 					else
 					{
-						fprintf(stderr, "BCryptGetProperty(BCRYPT_OBJECT_LENGTH) failed with 0x%X", status);
+						fprintf(stderr, "BCryptSetProperty(BCRYPT_CHAINING_MODE) failed with 0x%X\n", status);
 					}
+
+					if (algorithmHandle)
+						::BCryptCloseAlgorithmProvider(algorithmHandle, 0);
 				}
 				else
 				{
-					fprintf(stderr, "BCryptSetProperty(BCRYPT_CHAINING_MODE) failed with 0x%X", status);
+					fprintf(stderr, "BCryptOpenAlgorithmProvider(BCRYPT_AES_ALGORITHM) failed with 0x%X\n", status);
 				}
 
-				if (algorithmHandle)
-					::BCryptCloseAlgorithmProvider(algorithmHandle, 0);
+				return successful;
 			}
-			else
-			{
-				fprintf(stderr, "BCryptOpenAlgorithmProvider(BCRYPT_AES_ALGORITHM) failed with 0x%X", status);
-			}
+		}
 
-			return successful;
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv)
+		{
+			return Detail::BCryptAes128Cbc(Detail::Operation::Decrypt, inEncryptedData, inOutDataSize, outDecryptedData, inOutDataSize, key.data(), iv.data());
+		}
+
+		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv)
+		{
+			assert(Align(inOutDataSize, Aes128Alignment) == inOutDataSize);
+			return Detail::BCryptAes128Cbc(Detail::Operation::Encrypt, inDecryptedData, inOutDataSize, outEncryptedData, inOutDataSize, key.data(), iv.data());
 		}
 	}
 

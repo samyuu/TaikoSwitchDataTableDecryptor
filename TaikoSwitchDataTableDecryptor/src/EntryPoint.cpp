@@ -30,7 +30,7 @@ namespace TaikoSwitchDataTableDecryptor
 		auto decompressedBuffer = std::make_unique<u8[]>(MaxDecompressedGameDataTableFileSize);
 		if (!PeepoHappy::Compression::Inflate(compressedData, compressedDataSize, decompressedBuffer.get(), MaxDecompressedGameDataTableFileSize))
 		{
-			fprintf(stderr, "Failed to decompress input file");
+			fprintf(stderr, "Failed to decompress input file\n");
 			return false;
 		}
 
@@ -39,7 +39,7 @@ namespace TaikoSwitchDataTableDecryptor
 
 		if (!PeepoHappy::IO::WriteEntireFile(jsonOutputFilePath, reinterpret_cast<const u8*>(jsonString.data()), jsonString.size()))
 		{
-			fprintf(stderr, "Failed to write JSON output file");
+			fprintf(stderr, "Failed to write JSON output file\n");
 			return false;
 		}
 
@@ -49,9 +49,20 @@ namespace TaikoSwitchDataTableDecryptor
 	int ReadAndWriteEncryptedAndOrCompressedBinToJsonFile(std::string_view encryptedAndOrCompressedInputFilePath, std::string_view jsonOutputFilePath)
 	{
 		const auto[fileContent, fileSize] = PeepoHappy::IO::ReadEntireFile(encryptedAndOrCompressedInputFilePath);
-		if (fileSize <= 8)
+		if (fileContent == nullptr)
 		{
-			fprintf(stderr, "Unexpected end of file");
+			fprintf(stderr, "Failed to read input file\n");
+			return EXIT_WIDEPEEPOSAD;
+		}
+		else if (fileSize <= 8)
+		{
+			fprintf(stderr, "Unexpected end of file\n");
+			return EXIT_WIDEPEEPOSAD;
+		}
+
+		if (fileSize >= MaxDecompressedGameDataTableFileSize)
+		{
+			fprintf(stderr, "Input file too large. DataTable files are limited to %zu bytes\n", MaxDecompressedGameDataTableFileSize);
 			return EXIT_WIDEPEEPOSAD;
 		}
 
@@ -62,7 +73,7 @@ namespace TaikoSwitchDataTableDecryptor
 		}
 		else
 		{
-			std::array<u8, PeepoHappy::Crypto::Aes128KeySize> iv = {};
+			std::array<u8, PeepoHappy::Crypto::Aes128IVSize> iv = {};
 			memcpy(iv.data(), fileContent.get(), iv.size());
 
 			const size_t fileSizeWithoutIV = (fileSize - iv.size());
@@ -70,7 +81,7 @@ namespace TaikoSwitchDataTableDecryptor
 
 			auto decryptedBuffer = std::make_unique<u8[]>(fileSizeWithoutIV);
 			if (!PeepoHappy::Crypto::DecryptAes128Cbc(fileContentWithoutIV, decryptedBuffer.get(), fileSizeWithoutIV, DataTableAesKey, iv))
-				fprintf(stderr, "Failed to decrypt input file");
+				fprintf(stderr, "Failed to decrypt input file\n");
 
 			if (!DecompressAndWriteDataTableJsonFile(decryptedBuffer.get(), fileSizeWithoutIV, jsonOutputFilePath))
 				return EXIT_WIDEPEEPOSAD;
@@ -79,22 +90,50 @@ namespace TaikoSwitchDataTableDecryptor
 		return EXIT_WIDEPEEPOHAPPY;
 	}
 
-	int ReadAndWriteJsonFileToCompressedBin(std::string_view jsonInputFilePath, std::string_view compressedOutputFilePath)
+	int ReadAndWriteJsonFileToCompressedAndEncryptedBin(std::string_view jsonInputFilePath, std::string_view compressedAndEncryptedOutputFilePath)
 	{
-		auto compressedBuffer = std::make_unique<u8[]>(MaxDecompressedGameDataTableFileSize);
-
 		const auto[fileContent, fileSize] = PeepoHappy::IO::ReadEntireFile(jsonInputFilePath);
-		const auto compressedSize = PeepoHappy::Compression::Deflate(fileContent.get(), fileSize, compressedBuffer.get(), MaxDecompressedGameDataTableFileSize);
-
-		if (compressedSize < 0)
+		if (fileContent == nullptr)
 		{
-			fprintf(stderr, "Failed to compress JSON file");
+			fprintf(stderr, "Failed to read input file\n");
+			return EXIT_WIDEPEEPOSAD;
+		}
+		else if ((fileSize + PeepoHappy::Crypto::Aes128IVSize) >= MaxDecompressedGameDataTableFileSize)
+		{
+			fprintf(stderr, "Input file too large. DataTable files are limited to %zu bytes\n", MaxDecompressedGameDataTableFileSize);
 			return EXIT_WIDEPEEPOSAD;
 		}
 
-		if (!PeepoHappy::IO::WriteEntireFile(compressedOutputFilePath, compressedBuffer.get(), compressedSize))
+		auto singleAllocationCombinedBuffers = std::make_unique<u8[]>(MaxDecompressedGameDataTableFileSize * 2);
+		u8* compressedBuffer = (singleAllocationCombinedBuffers.get() + 0);
+		u8* encryptedBufferWithIV = (singleAllocationCombinedBuffers.get() + MaxDecompressedGameDataTableFileSize);
+		u8* encryptedBuffer = (encryptedBufferWithIV + PeepoHappy::Crypto::Aes128IVSize);
+
+		const size_t compressedSize = PeepoHappy::Compression::Deflate(fileContent.get(), fileSize, compressedBuffer, MaxDecompressedGameDataTableFileSize);
+		const size_t alignedSize = PeepoHappy::Crypto::Align(compressedSize, PeepoHappy::Crypto::Aes128Alignment);
+		const size_t alignedSizeWithIV = (alignedSize + PeepoHappy::Crypto::Aes128IVSize);
+
+		if (compressedSize <= 0)
 		{
-			fprintf(stderr, "Failed to write compressed output file");
+			fprintf(stderr, "Failed to compress JSON file\n");
+			return EXIT_WIDEPEEPOSAD;
+		}
+
+		assert(compressedSize < MaxDecompressedGameDataTableFileSize && "The compressed data could technically be larger... but that seems highly unlikely for plain text JSON");
+		assert((alignedSize + PeepoHappy::Crypto::Aes128IVSize) <= MaxDecompressedGameDataTableFileSize);
+
+		constexpr std::array<u8, PeepoHappy::Crypto::Aes128IVSize> dummyIV = { 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC };
+		memcpy(encryptedBufferWithIV, dummyIV.data(), dummyIV.size());
+
+		if (!PeepoHappy::Crypto::EncryptAes128Cbc(compressedBuffer, encryptedBuffer, alignedSize, DataTableAesKey, dummyIV))
+		{
+			fprintf(stderr, "Failed to encrypt JSON file\n");
+			return EXIT_WIDEPEEPOSAD;
+		}
+
+		if (!PeepoHappy::IO::WriteEntireFile(compressedAndEncryptedOutputFilePath, encryptedBufferWithIV, alignedSizeWithIV))
+		{
+			fprintf(stderr, "Failed to write encrypted output file\n");
 			return EXIT_WIDEPEEPOSAD;
 		}
 
@@ -108,7 +147,7 @@ namespace TaikoSwitchDataTableDecryptor
 		if (argc <= 1)
 		{
 			printf("Description:\n");
-			printf("    A program to decrypt, decompress and recompress DataTable JSON files\n");
+			printf("    A program to decrypt+decompress and compress+encrypt DataTable JSON files\n");
 			printf("    used by the Switch release of Taiko no Tatsujin (and possibly more)\n");
 			printf("\n");
 			printf("Usage:\n");
@@ -131,9 +170,8 @@ namespace TaikoSwitchDataTableDecryptor
 		if (PeepoHappy::IO::HasFileExtension(inputPath, ".bin"))
 			return ReadAndWriteEncryptedAndOrCompressedBinToJsonFile(inputPath, PeepoHappy::IO::ChangeFileExtension(inputPath, ".json"));
 
-		// TODO: Actually.. it doesn't look like there are game encryption checks in place so this will have to re-encrypt too (?)
 		if (PeepoHappy::IO::HasFileExtension(inputPath, ".json"))
-			return ReadAndWriteJsonFileToCompressedBin(inputPath, PeepoHappy::IO::ChangeFileExtension(inputPath, ".bin"));
+			return ReadAndWriteJsonFileToCompressedAndEncryptedBin(inputPath, PeepoHappy::IO::ChangeFileExtension(inputPath, ".bin"));
 
 		fprintf(stderr, "Unexpected file extension\n");
 		return EXIT_WIDEPEEPOSAD;
