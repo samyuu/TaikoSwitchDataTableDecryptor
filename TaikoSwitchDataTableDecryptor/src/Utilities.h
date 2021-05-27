@@ -1,6 +1,8 @@
 #pragma once
 #include "Types.h"
 
+// NOTE: In case anyone is wondering... no, there is no particular reason for these names. 
+//		 I just like Peepo and it cheers me up after looking at code all day :WidePeepoHappy:
 #define EXIT_WIDEPEEPOHAPPY EXIT_SUCCESS
 #define EXIT_WIDEPEEPOSAD EXIT_FAILURE
 
@@ -35,9 +37,6 @@ namespace PeepoHappy
 
 	namespace IO
 	{
-		// NOTE: Sucks for modders, makes sense for them to do it though...
-		constexpr size_t MaxDecompressedGameDataTableFileSize = 0x200000;
-
 		std::pair<std::unique_ptr<u8[]>, size_t> ReadEntireFile(std::string_view filePath);
 		bool WriteEntireFile(std::string_view filePath, const u8* fileContent, size_t fileSize);
 
@@ -47,13 +46,8 @@ namespace PeepoHappy
 
 	namespace Crypto
 	{
-		constexpr size_t AesKeySize = 16;
-
-		// NOTE: Literally loaded directly into X8 right before calling nn::crypto::DecryptAes128Cbc()
-		//		 they couldn't even bother trying to "hide" it by adding a few pointer indirection or scrambling first :KEKL:
-		constexpr std::array<u8, AesKeySize> DataTableAesKey = { 0x57, 0x39, 0x73, 0x35, 0x38, 0x73, 0x68, 0x43, 0x54, 0x70, 0x76, 0x75, 0x6A, 0x6B, 0x4A, 0x74, };
-
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, AesKeySize> key, std::array<u8, AesKeySize> iv);
+		constexpr size_t Aes128KeySize = 16;
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128KeySize> iv);
 	}
 
 	namespace Compression

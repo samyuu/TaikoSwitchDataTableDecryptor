@@ -172,7 +172,7 @@ namespace PeepoHappy
 
 	namespace Crypto
 	{
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, AesKeySize> key, std::array<u8, AesKeySize> iv)
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128KeySize> iv)
 		{
 			bool successful = false;
 			::NTSTATUS status = {};
@@ -203,7 +203,7 @@ namespace PeepoHappy
 							}
 							else
 							{
-								fprintf(stderr, __FUNCTION__"(): BCryptDecrypt() failed with 0x%X", status);
+								fprintf(stderr, "BCryptDecrypt() failed with 0x%X", status);
 							}
 
 							if (symmetricKeyHandle)
@@ -211,17 +211,17 @@ namespace PeepoHappy
 						}
 						else
 						{
-							fprintf(stderr, __FUNCTION__"(): BCryptGenerateSymmetricKey() failed with 0x%X", status);
+							fprintf(stderr, "BCryptGenerateSymmetricKey() failed with 0x%X", status);
 						}
 					}
 					else
 					{
-						fprintf(stderr, __FUNCTION__"(): BCryptGetProperty(BCRYPT_OBJECT_LENGTH) failed with 0x%X", status);
+						fprintf(stderr, "BCryptGetProperty(BCRYPT_OBJECT_LENGTH) failed with 0x%X", status);
 					}
 				}
 				else
 				{
-					fprintf(stderr, __FUNCTION__"(): BCryptSetProperty(BCRYPT_CHAINING_MODE) failed with 0x%X", status);
+					fprintf(stderr, "BCryptSetProperty(BCRYPT_CHAINING_MODE) failed with 0x%X", status);
 				}
 
 				if (algorithmHandle)
@@ -229,7 +229,7 @@ namespace PeepoHappy
 			}
 			else
 			{
-				fprintf(stderr, __FUNCTION__"(): BCryptOpenAlgorithmProvider(BCRYPT_AES_ALGORITHM) failed with 0x%X", status);
+				fprintf(stderr, "BCryptOpenAlgorithmProvider(BCRYPT_AES_ALGORITHM) failed with 0x%X", status);
 			}
 
 			return successful;
