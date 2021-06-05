@@ -5,6 +5,7 @@
 #include <array>
 #include <vector>
 #include <memory>
+#include <functional>
 #include <tuple>
 #include <assert.h>
 

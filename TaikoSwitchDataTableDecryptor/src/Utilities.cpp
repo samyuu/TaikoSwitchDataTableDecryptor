@@ -41,6 +41,19 @@ namespace PeepoHappy
 			return utf16String;
 		}
 
+		bool AppearsToUse8BitCodeUnits(std::string_view uncertainUTF8Text)
+		{
+			size_t nullCount = 0;
+			for (const char c : uncertainUTF8Text)
+				nullCount += (c == '\0');
+
+			if (uncertainUTF8Text.empty() || nullCount == 0)
+				return true;
+
+			const bool unusualNullCount = nullCount >= (uncertainUTF8Text.size() / 4);
+			return !unusualNullCount;
+		}
+
 		std::pair<int, const char**> GetCommandLineArguments()
 		{
 			static std::vector<std::string> argvString;
@@ -62,9 +75,17 @@ namespace PeepoHappy
 			return { argc, argvCStr.data() };
 		}
 
-		std::vector<std::string> GetArgV()
+		std::string GetExecutableFilePath()
 		{
-			return std::vector<std::string>();
+			wchar_t fileNameBuffer[MAX_PATH];
+			const auto moduleFileName = std::wstring_view(fileNameBuffer, ::GetModuleFileNameW(NULL, fileNameBuffer, MAX_PATH));
+
+			return (moduleFileName.size() < MAX_PATH) ? UTF8::Narrow(moduleFileName) : "";
+		}
+
+		std::string GetExecutableDirectory()
+		{
+			return std::string(Path::GetDirectoryName(GetExecutableFilePath()));
 		}
 
 		WideArg::WideArg(std::string_view inputString)
@@ -94,6 +115,44 @@ namespace PeepoHappy
 		const wchar_t* WideArg::c_str() const
 		{
 			return (convertedLength < stackBuffer.size()) ? stackBuffer.data() : heapBuffer.get();
+		}
+	}
+
+	namespace Path
+	{
+		std::string_view GetFileExtension(std::string_view filePath)
+		{
+			const size_t lastSeparator = filePath.find_last_of("./\\");
+			if (lastSeparator != std::string_view::npos)
+			{
+				if (filePath[lastSeparator] == '.')
+					return filePath.substr(lastSeparator);
+			}
+			return std::string_view(filePath.data(), 0);
+		}
+
+		std::string_view GetFileName(std::string_view filePath, bool includeExtension)
+		{
+			const size_t lastSeparator = filePath.find_last_of("/\\");
+			const auto fileName = (lastSeparator == std::string_view::npos) ? filePath : filePath.substr(lastSeparator + 1);
+			return (includeExtension) ? fileName : TrimFileExtension(fileName);
+		}
+
+		std::string_view GetDirectoryName(std::string_view filePath)
+		{
+			const auto fileName = GetFileName(filePath);
+			return fileName.empty() ? filePath : filePath.substr(0, filePath.size() - fileName.size() - 1);
+		}
+
+		std::string_view TrimFileExtension(std::string_view filePath)
+		{
+			return filePath.substr(0, filePath.size() - GetFileExtension(filePath).size());
+		}
+
+		bool HasFileExtension(std::string_view filePath, std::string_view extensionToCheckFor)
+		{
+			assert(!extensionToCheckFor.empty() && extensionToCheckFor[0] == '.');
+			return ASCII::MatchesInsensitive(GetFileExtension(filePath), extensionToCheckFor);
 		}
 	}
 
@@ -145,28 +204,53 @@ namespace PeepoHappy
 			return true;
 		}
 
-		bool HasFileExtension(std::string_view filePath, std::string_view extensionToCheckFor)
+		void ParseIniFileContent(std::string_view iniFileContent, std::function<void(std::string_view section, std::string_view key, std::string_view value)> perEntryFunc)
 		{
-			assert(!extensionToCheckFor.empty() && extensionToCheckFor[0] == '.');
-
-			if (extensionToCheckFor.size() >= filePath.size())
-				return false;
-
-			const auto stringA = filePath.substr(filePath.size() - extensionToCheckFor.size());
-			const auto stringB = extensionToCheckFor;
-			return std::equal(stringA.begin(), stringA.end(), stringB.begin(), stringB.end(), [](char a, char b) { return ::tolower(a) == ::tolower(b); });
-		}
-
-		std::string ChangeFileExtension(std::string_view filePath, std::string_view newExtension)
-		{
-			const size_t lastSeparator = filePath.find_last_of("./\\");
-			if (lastSeparator != std::string_view::npos)
+			auto forEachNonCommentLine = [](std::string_view lines, auto perLineReturnFalseToStopFunc) -> void
 			{
-				if (filePath[lastSeparator] == '.')
-					return std::string(filePath.substr(0, lastSeparator)) + std::string(newExtension);
-			}
+				for (size_t absoulteIndex = 0; absoulteIndex < lines.size(); absoulteIndex++)
+				{
+					const std::string_view remainingLines = lines.substr(absoulteIndex);
+					for (size_t relativeIndex = 0; relativeIndex < remainingLines.size(); relativeIndex++)
+					{
+						if (remainingLines[relativeIndex] == '\n')
+						{
+							const std::string_view line = remainingLines.substr(0, (relativeIndex > 0 && remainingLines[relativeIndex - 1] == '\r') ? (relativeIndex - 1) : relativeIndex);
+							if (!line.empty() && (line[0] != ';' && line[0] != '#') && !perLineReturnFalseToStopFunc(line))
+								return;
 
-			return std::string(filePath) + std::string(newExtension);
+							absoulteIndex += relativeIndex;
+							break;
+						}
+					}
+				}
+			};
+
+			auto tryParseSectionHeaderLine = [](std::string_view line) -> std::string_view
+			{
+				return (line.size() >= 2 && line.front() == '[' && line.back() == ']') ? line.substr(1, line.size() - 2) : "";
+			};
+
+			auto splitAndTrimKeyValuePairLine = [](std::string_view keyValuePairLine) -> std::pair<std::string_view, std::string_view>
+			{
+				const size_t separatorIndex = keyValuePairLine.find_first_of("=");
+				if (separatorIndex == std::string_view::npos)
+					return {};
+
+				const auto key = keyValuePairLine.substr(0, separatorIndex);
+				const auto value = keyValuePairLine.substr(separatorIndex + 1);
+				return { ASCII::Trim(key), ASCII::Trim(value) };
+			};
+
+			std::string_view lastSection;
+			forEachNonCommentLine(iniFileContent, [&](std::string_view nonCommentLine)
+			{
+				if (auto newSection = tryParseSectionHeaderLine(ASCII::Trim(nonCommentLine)); !newSection.empty())
+					lastSection = newSection;
+				else if (const auto[key, value] = splitAndTrimKeyValuePairLine(nonCommentLine); !key.empty())
+					perEntryFunc(lastSection, key, value);
+				return true;
+			});
 		}
 	}
 
@@ -251,20 +335,84 @@ namespace PeepoHappy
 			}
 		}
 
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv)
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv)
 		{
 			return Detail::BCryptAes128Cbc(Detail::Operation::Decrypt, inEncryptedData, inOutDataSize, outDecryptedData, inOutDataSize, key.data(), iv.data());
 		}
 
-		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, std::array<u8, Aes128KeySize> key, std::array<u8, Aes128IVSize> iv)
+		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv)
 		{
 			assert(Align(inOutDataSize, Aes128Alignment) == inOutDataSize);
 			return Detail::BCryptAes128Cbc(Detail::Operation::Encrypt, inDecryptedData, inOutDataSize, outEncryptedData, inOutDataSize, key.data(), iv.data());
+		}
+
+		Aes128KeyBytes ParseAes128KeyHexByteString(std::string_view hexByteString)
+		{
+			constexpr size_t hexDigitsPerByte = 2;
+
+			char upperCaseHexChars[(Aes128KeySize * hexDigitsPerByte) + sizeof('\0')] = {};
+			size_t hexCharsWrittenSoFar = 0;
+
+			for (size_t charIndex = 0; charIndex < hexByteString.size(); charIndex++)
+			{
+				if (ASCII::IsWhiteSpace(hexByteString[charIndex]))
+					continue;
+
+				const char upperCaseChar = ASCII::ToUpperCase(hexByteString[charIndex]);
+				upperCaseHexChars[hexCharsWrittenSoFar++] = ((upperCaseChar >= '0' && upperCaseChar <= '9') || (upperCaseChar >= 'A' && upperCaseChar <= 'F')) ? upperCaseChar : '0';
+
+				if (hexCharsWrittenSoFar >= std::size(upperCaseHexChars))
+					break;
+			}
+
+			Aes128KeyBytes resultKeyBytes = {};
+			for (size_t byteIndex = 0; byteIndex < resultKeyBytes.size(); byteIndex++)
+			{
+				auto upperCaseHexCharToNibble = [](char c) -> u8 { return (c >= '0' && c <= '9') ? (c - '0') : (c >= 'A' && c <= 'F') ? (0xA + (c - 'A')) : 0x0; };
+
+				u8 combinedByte = 0x00;
+				combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 0]) << 4);
+				combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 1]) << 0);
+				resultKeyBytes[byteIndex] = combinedByte;
+			}
+			return resultKeyBytes;
 		}
 	}
 
 	namespace Compression
 	{
+		namespace
+		{
+#pragma pack(push, 1)
+			struct GZipHeader
+			{
+				u8 Magic[2];
+				u8 CompressionMethod;
+				u8 Flags;
+				u32 Timestamp;
+				u8 ExtraFlags;
+				u8 OperatingSystem;
+			};
+#pragma pack(pop)
+
+			static_assert(sizeof(GZipHeader) == 10);
+		}
+
+		bool HasValidGZipHeader(const u8* fileContent, size_t fileSize)
+		{
+			if (fileSize <= sizeof(GZipHeader))
+				return false;
+
+			const GZipHeader* header = reinterpret_cast<const GZipHeader*>(fileContent);
+
+			// NOTE: This is by no means comprehensive but should be enough for datatable files and (not falsely) detecting encrypted data
+			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) &&
+				(header->CompressionMethod == Z_DEFLATED) &&
+				(header->Flags == 0) &&
+				(header->Timestamp == 0) &&
+				(header->ExtraFlags == 0);
+		}
+
 		bool Inflate(const u8* inCompressedData, size_t inDataSize, u8* outDecompressedData, size_t outDataSize)
 		{
 			z_stream zStream = {};
@@ -281,7 +429,9 @@ namespace PeepoHappy
 				return false;
 
 			const int inflateResult = inflate(&zStream, Z_FINISH);
-			// assert(inflateResult == Z_STREAM_END && zStream.msg == nullptr);
+			// BUG: I remember there being some edge case where it would report "incorrect end" or something desprite having already decompressed everything correctly..? 
+			//		Don't really wanna risk falsely reporting an error here...
+			assert(inflateResult == Z_STREAM_END && zStream.msg == nullptr);
 
 			const int endResult = inflateEnd(&zStream);
 			if (endResult != Z_OK)
