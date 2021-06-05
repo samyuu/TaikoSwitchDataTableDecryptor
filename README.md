@@ -34,3 +34,8 @@ If no matching key name is found for the input file name then the resulting JSON
 * `TaikoSwitchDataTableDecryptor.exe "musicinfo jp_ver143.json"` -> `musicinfo.bin`
 
 This interface design is intentionally simplistic to support Windows Explorer drag-and-drop style conversion without the need to manually enter commands into a command prompt.
+
+## License
+
+This program is licensed under the [MIT License](LICENSE)
+and embeds a copy of the source code for the [zlib](https://www.zlib.net/) library by [Jean-loup Gailly and Mark Adler](Dependencies/zlib/LICENSE).
