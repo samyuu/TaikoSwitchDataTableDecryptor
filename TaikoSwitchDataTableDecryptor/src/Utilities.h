@@ -94,18 +94,24 @@ namespace PeepoHappy
 	namespace Crypto
 	{
 		constexpr size_t Aes128KeySize = 16;
-		constexpr size_t Aes128IVSize = 16;
-		constexpr size_t Aes128Alignment = 16;
+		constexpr size_t Aes256KeySize = 32;
+		constexpr size_t AesIVSize = 16;
+		constexpr size_t AesBlockAlignment = 16;
 
 		using Aes128KeyBytes = std::array<u8, Aes128KeySize>;
-		using Aes128IVBytes = std::array<u8, Aes128IVSize>;
+		using Aes256KeyBytes = std::array<u8, Aes256KeySize>;
+		using AesIVBytes = std::array<u8, AesIVSize>;
 
 		constexpr size_t Align(size_t value, size_t alignment) { return (value + (alignment - 1)) & ~(alignment - 1); }
 
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv);
-		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv);
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes128KeyBytes key, AesIVBytes iv);
+		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes128KeyBytes key, AesIVBytes iv);
 
-		Aes128KeyBytes ParseAes128KeyHexByteString(std::string_view hexString);
+		bool DecryptAes256Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes256KeyBytes key, AesIVBytes iv);
+		bool EncryptAes256Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes256KeyBytes key, AesIVBytes iv);
+
+		Aes128KeyBytes ParseAes128KeyHexByteString(std::string_view hexByteString);
+		Aes256KeyBytes ParseAes256KeyHexByteString(std::string_view hexByteString);
 	}
 
 	namespace Compression

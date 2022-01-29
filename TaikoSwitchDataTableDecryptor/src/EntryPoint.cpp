@@ -8,15 +8,41 @@ namespace TaikoSwitchDataTableDecryptor
 
 	constexpr std::string_view EncrpytionKeysIniFileName = "TaikoSwitchDataTableEncrpytionKeys.ini";
 
-	struct NamedDataTableKey
+	struct NamedEncryptionKey
 	{
 		std::string_view Name;
-		PeepoHappy::Crypto::Aes128KeyBytes Key;
+		size_t KeyByteSize;
+		PeepoHappy::Crypto::Aes128KeyBytes Key128;
+		PeepoHappy::Crypto::Aes256KeyBytes Key256;
 	};
 
-	std::vector<NamedDataTableKey> ReadAndParseEncrpytionKeysIniFile(std::unique_ptr<u8[]>& outIniFileContent)
+	bool DecryptUsingNamedKey(const NamedEncryptionKey& namedKey, const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, PeepoHappy::Crypto::AesIVBytes iv)
 	{
-		std::vector<NamedDataTableKey> namedKeys;
+		if (namedKey.KeyByteSize == namedKey.Key128.size())
+			return PeepoHappy::Crypto::DecryptAes128Cbc(inEncryptedData, outDecryptedData, inOutDataSize, namedKey.Key128, iv);
+		else if (namedKey.KeyByteSize == namedKey.Key256.size())
+			return PeepoHappy::Crypto::DecryptAes256Cbc(inEncryptedData, outDecryptedData, inOutDataSize, namedKey.Key256, iv);
+		else
+			assert(false);
+
+		return false;
+	}
+
+	bool EncryptUsingNamedKey(const NamedEncryptionKey& namedKey, const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, PeepoHappy::Crypto::AesIVBytes iv)
+	{
+		if (namedKey.KeyByteSize == namedKey.Key128.size())
+			return PeepoHappy::Crypto::EncryptAes128Cbc(inDecryptedData, outEncryptedData, inOutDataSize, namedKey.Key128, iv);
+		else if (namedKey.KeyByteSize == namedKey.Key256.size())
+			return PeepoHappy::Crypto::EncryptAes256Cbc(inDecryptedData, outEncryptedData, inOutDataSize, namedKey.Key256, iv);
+		else
+			assert(false);
+
+		return false;
+	}
+
+	std::vector<NamedEncryptionKey> ReadAndParseEncrpytionKeysIniFile(std::unique_ptr<u8[]>& outIniFileContent)
+	{
+		std::vector<NamedEncryptionKey> namedKeys;
 
 #if 1 // NOTE: I think this makes more sense here, don't wanna fail to load the file just because of a different working directory
 		auto[iniFileContent, iniFileSize] = PeepoHappy::IO::ReadEntireFile(PeepoHappy::UTF8::GetExecutableDirectory() + "/" + std::string(EncrpytionKeysIniFileName));
@@ -31,10 +57,20 @@ namespace TaikoSwitchDataTableDecryptor
 			if (!PeepoHappy::UTF8::AppearsToUse8BitCodeUnits(iniFileStringView.substr(0, std::min<size_t>(32, iniFileStringView.size()))))
 				fprintf(stderr, "INI file does not appear to be UTF-8 encoded\n");
 
-			PeepoHappy::IO::ParseIniFileContent(iniFileStringView, [&namedKeys](std::string_view section, std::string_view key, std::string_view value)
+			PeepoHappy::IO::ParseIniFileContent(iniFileStringView, [&namedKeys](std::string_view iniSection, std::string_view iniKey, std::string_view iniValue)
 			{
-				if (section == "datatable_keys")
-					namedKeys.push_back({ key, PeepoHappy::Crypto::ParseAes128KeyHexByteString(value) });
+				if (iniSection == "datatable_keys")
+				{
+					NamedEncryptionKey newKey;
+					newKey.Name = iniKey;
+					newKey.Key128 = PeepoHappy::Crypto::ParseAes128KeyHexByteString(iniValue);
+					newKey.Key256 = PeepoHappy::Crypto::ParseAes256KeyHexByteString(iniValue);
+
+					const bool upperHalfOf256KeyAllZeros = std::all_of(newKey.Key256.begin() + (PeepoHappy::Crypto::Aes256KeySize / 2), newKey.Key256.end(), [](u8 byte) { return byte == 0x00; });
+					newKey.KeyByteSize = upperHalfOf256KeyAllZeros ? PeepoHappy::Crypto::Aes128KeySize : PeepoHappy::Crypto::Aes256KeySize;
+
+					namedKeys.push_back(std::move(newKey));
+				}
 			});
 
 			if (namedKeys.empty())
@@ -50,7 +86,7 @@ namespace TaikoSwitchDataTableDecryptor
 	}
 
 	// NOTE: { "datatable/musicinfo.bin", NamedKey{"jp_ver169", ...} } -> "datatable/musicinfo jp_ver169.json"
-	std::string FormatJsonOutputFilePathUsingNamedKey(std::string_view binFilePath, const NamedDataTableKey* key)
+	std::string FormatJsonOutputFilePathUsingNamedKey(std::string_view binFilePath, const NamedEncryptionKey* key)
 	{
 		std::string formattedFilePath { PeepoHappy::Path::TrimFileExtension(binFilePath) };
 		if (key != nullptr && !key->Name.empty())
@@ -63,7 +99,7 @@ namespace TaikoSwitchDataTableDecryptor
 	}
 
 	// NOTE: ("datatable/musicinfo jp_ver169.json") -> { "datatable/musicinfo.bin", NamedKey{"jp_ver169", ...} } 
-	std::pair<std::string, const NamedDataTableKey*> ParseJsonInputFilePathUsingNamedKeysAndFormatBinOutputFilePath(std::string_view jsonFilePath, const std::vector<NamedDataTableKey>& namedKeys)
+	std::pair<std::string, const NamedEncryptionKey*> ParseJsonInputFilePathUsingNamedKeysAndFormatBinOutputFilePath(std::string_view jsonFilePath, const std::vector<NamedEncryptionKey>& namedKeys)
 	{
 		const auto fileNameWithoutExtension = PeepoHappy::Path::GetFileName(jsonFilePath, false);
 		const auto filePathWithoutExtension = PeepoHappy::Path::TrimFileExtension(jsonFilePath);
@@ -79,7 +115,7 @@ namespace TaikoSwitchDataTableDecryptor
 		return { std::string(PeepoHappy::Path::TrimFileExtension(jsonFilePath)) + ".bin", nullptr };
 	}
 
-	const NamedDataTableKey* TryOutAllAvailableEncrpytionKeysUntilGZipHeaderIsFound(const u8* encryptedFileContent, size_t fileSize, PeepoHappy::Crypto::Aes128IVBytes iv, const std::vector<NamedDataTableKey>& namedKeys)
+	const NamedEncryptionKey* TryOutAllAvailableEncrpytionKeysUntilGZipHeaderIsFound(const u8* encryptedFileContent, size_t fileSize, PeepoHappy::Crypto::AesIVBytes iv, const std::vector<NamedEncryptionKey>& namedKeys)
 	{
 		std::array<u8, 16> decryptedHeaderBuffer = {};
 		if (fileSize <= decryptedHeaderBuffer.size())
@@ -88,18 +124,19 @@ namespace TaikoSwitchDataTableDecryptor
 			return nullptr;
 		}
 
-		// NOTE: Backwards because newer version keys which are more likely to be used are most likely defined last
-		for (auto namedKeyIt = namedKeys.rbegin(); namedKeyIt != namedKeys.rend(); namedKeyIt++)
+		// NOTE: ~~Backwards because newer version keys which are more likely to be used are most likely defined last~~
+		//		 turns out everyone already got into the habbit of placing new ones at the top
+		for (const NamedEncryptionKey& namedKey : namedKeys)
 		{
 			decryptedHeaderBuffer = {};
-			if (!PeepoHappy::Crypto::DecryptAes128Cbc(encryptedFileContent, decryptedHeaderBuffer.data(), decryptedHeaderBuffer.size(), namedKeyIt->Key, iv))
+			if (!DecryptUsingNamedKey(namedKey, encryptedFileContent, decryptedHeaderBuffer.data(), decryptedHeaderBuffer.size(), iv))
 			{
 				fprintf(stderr, "Failed to decrypt input file header\n");
 				return nullptr;
 			}
 
 			if (PeepoHappy::Compression::HasValidGZipHeader(decryptedHeaderBuffer.data(), decryptedHeaderBuffer.size()))
-				return &(*namedKeyIt);
+				return &namedKey;
 		}
 
 		return nullptr;
@@ -115,7 +152,7 @@ namespace TaikoSwitchDataTableDecryptor
 		}
 
 		const size_t jsonLength = strnlen(reinterpret_cast<const char*>(decompressedBuffer.get()), MaxDecompressedGameDataTableFileSize);
-		const auto jsonString = std::string_view(reinterpret_cast<const char*>(decompressedBuffer.get()), jsonLength);
+		const std::string_view jsonString = std::string_view(reinterpret_cast<const char*>(decompressedBuffer.get()), jsonLength);
 
 		if (jsonLength <= 0)
 		{
@@ -132,7 +169,7 @@ namespace TaikoSwitchDataTableDecryptor
 		return true;
 	}
 
-	int ReadAndWriteEncryptedAndOrCompressedBinToJsonFile(std::string_view binInputFilePath, const std::vector<NamedDataTableKey>& namedKeys)
+	int ReadAndWriteEncryptedAndOrCompressedBinToJsonFile(std::string_view binInputFilePath, const std::vector<NamedEncryptionKey>& namedKeys)
 	{
 		const auto[binFileContent, binFileSize] = PeepoHappy::IO::ReadEntireFile(binInputFilePath);
 		if (binFileContent == nullptr)
@@ -160,13 +197,13 @@ namespace TaikoSwitchDataTableDecryptor
 		}
 		else
 		{
-			PeepoHappy::Crypto::Aes128IVBytes iv = {};
+			PeepoHappy::Crypto::AesIVBytes iv = {};
 			memcpy(iv.data(), binFileContent.get(), iv.size());
 
 			const size_t binFileSizeWithoutIV = (binFileSize - iv.size());
 			const u8* binFileContentWithoutIV = (binFileContent.get() + iv.size());
 
-			const auto* foundNamedKey = TryOutAllAvailableEncrpytionKeysUntilGZipHeaderIsFound(binFileContentWithoutIV, binFileSizeWithoutIV, iv, namedKeys);
+			const NamedEncryptionKey* foundNamedKey = TryOutAllAvailableEncrpytionKeysUntilGZipHeaderIsFound(binFileContentWithoutIV, binFileSizeWithoutIV, iv, namedKeys);
 			if (foundNamedKey == nullptr)
 			{
 				printf("No matching encrpytion key definition found for input file\n");
@@ -174,7 +211,7 @@ namespace TaikoSwitchDataTableDecryptor
 			}
 
 			auto decryptedBuffer = std::make_unique<u8[]>(binFileSizeWithoutIV);
-			if (!PeepoHappy::Crypto::DecryptAes128Cbc(binFileContentWithoutIV, decryptedBuffer.get(), binFileSizeWithoutIV, foundNamedKey->Key, iv))
+			if (!DecryptUsingNamedKey(*foundNamedKey, binFileContentWithoutIV, decryptedBuffer.get(), binFileSizeWithoutIV, iv))
 				fprintf(stderr, "Failed to decrypt input file\n");
 
 			if (!DecompressAndWriteDataTableJsonFile(decryptedBuffer.get(), binFileSizeWithoutIV, FormatJsonOutputFilePathUsingNamedKey(binInputFilePath, foundNamedKey)))
@@ -184,7 +221,7 @@ namespace TaikoSwitchDataTableDecryptor
 		return EXIT_WIDEPEEPOHAPPY;
 	}
 
-	int ReadAndWriteJsonToCompressedAndOrEncryptedBinFile(std::string_view jsonInputFilePath, const std::vector<NamedDataTableKey>& namedKeys)
+	int ReadAndWriteJsonToCompressedAndOrEncryptedBinFile(std::string_view jsonInputFilePath, const std::vector<NamedEncryptionKey>& namedKeys)
 	{
 		const auto[jsonFileContent, jsonFileSize] = PeepoHappy::IO::ReadEntireFile(jsonInputFilePath);
 		if (jsonFileContent == nullptr)
@@ -192,20 +229,22 @@ namespace TaikoSwitchDataTableDecryptor
 			fprintf(stderr, "Failed to read input file\n");
 			return EXIT_WIDEPEEPOSAD;
 		}
-		else if ((jsonFileSize + PeepoHappy::Crypto::Aes128IVSize) >= MaxDecompressedGameDataTableFileSize)
+		else if ((jsonFileSize + PeepoHappy::Crypto::AesIVSize) >= MaxDecompressedGameDataTableFileSize)
 		{
 			fprintf(stderr, "Input file too large. DataTable files are limited to %zu bytes\n", MaxDecompressedGameDataTableFileSize);
 			return EXIT_WIDEPEEPOSAD;
 		}
 
+
 		auto singleAllocationCombinedBuffers = std::make_unique<u8[]>(MaxDecompressedGameDataTableFileSize * 2);
 		u8* compressedBuffer = (singleAllocationCombinedBuffers.get() + 0);
 		u8* encryptedBufferWithIV = (singleAllocationCombinedBuffers.get() + MaxDecompressedGameDataTableFileSize);
-		u8* encryptedBuffer = (encryptedBufferWithIV + PeepoHappy::Crypto::Aes128IVSize);
+		u8* encryptedBuffer = (encryptedBufferWithIV + PeepoHappy::Crypto::AesIVSize);
 
 		const size_t compressedSize = PeepoHappy::Compression::Deflate(jsonFileContent.get(), jsonFileSize, compressedBuffer, MaxDecompressedGameDataTableFileSize);
-		const size_t alignedSize = PeepoHappy::Crypto::Align(compressedSize, PeepoHappy::Crypto::Aes128Alignment);
-		const size_t alignedSizeWithIV = (alignedSize + PeepoHappy::Crypto::Aes128IVSize);
+		const size_t alignedSize = PeepoHappy::Crypto::Align(compressedSize, PeepoHappy::Crypto::AesBlockAlignment);
+		const size_t alignedSizeWithIV = (alignedSize + PeepoHappy::Crypto::AesIVSize);
+		const size_t numberOfAlignmentBytesAdded = (alignedSize - compressedSize);
 
 		if (compressedSize <= 0)
 		{
@@ -226,12 +265,20 @@ namespace TaikoSwitchDataTableDecryptor
 		else
 		{
 			assert(compressedSize < MaxDecompressedGameDataTableFileSize && "The compressed data could technically be larger... but that seems highly unlikely for plain text JSON");
-			assert((alignedSize + PeepoHappy::Crypto::Aes128IVSize) <= MaxDecompressedGameDataTableFileSize);
+			assert((alignedSize + PeepoHappy::Crypto::AesIVSize) <= MaxDecompressedGameDataTableFileSize);
 
-			constexpr PeepoHappy::Crypto::Aes128IVBytes dummyIV = { 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC };
+			constexpr PeepoHappy::Crypto::AesIVBytes dummyIV = { 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC };
 			memcpy(encryptedBufferWithIV, dummyIV.data(), dummyIV.size());
 
-			if (!PeepoHappy::Crypto::EncryptAes128Cbc(compressedBuffer, encryptedBuffer, alignedSize, keyUsedForInitialDecrpytion->Key, dummyIV))
+#if 1 // HACK: Manually add PKCS7 padding (?)
+			if (keyUsedForInitialDecrpytion->KeyByteSize == keyUsedForInitialDecrpytion->Key256.size())
+			{
+				for (size_t i = 0; i < numberOfAlignmentBytesAdded; i++)
+					compressedBuffer[compressedSize + i] = static_cast<u8>(numberOfAlignmentBytesAdded);
+			}
+#endif
+
+			if (!EncryptUsingNamedKey(*keyUsedForInitialDecrpytion, compressedBuffer, encryptedBuffer, alignedSize, dummyIV))
 			{
 				fprintf(stderr, "Failed to encrypt JSON file\n");
 				return EXIT_WIDEPEEPOSAD;
@@ -272,7 +319,6 @@ namespace TaikoSwitchDataTableDecryptor
 			printf("    because of fixed size buffers used by the game during decompression.\n");
 			printf("\n");
 			printf("Credits:\n");
-			printf("    Programmed and reverse engineered by samyuu\n");
 			printf("    This program is licensed under the MIT License and makes use of the zlib library.\n");
 			printf("    The source code is available at " "https://github.com/samyuu/TaikoSwitchDataTableDecryptor" "\n");
 			printf("\n");
@@ -280,9 +326,9 @@ namespace TaikoSwitchDataTableDecryptor
 		}
 
 		std::unique_ptr<u8[]> stringViewOwningIniFileContent = nullptr;
-		auto namedKeys = ReadAndParseEncrpytionKeysIniFile(stringViewOwningIniFileContent);
+		std::vector<NamedEncryptionKey> namedKeys = ReadAndParseEncrpytionKeysIniFile(stringViewOwningIniFileContent);
 
-		const auto inputFilePath = std::string_view(argv[1]);
+		const std::string_view inputFilePath = std::string_view(argv[1]);
 		if (PeepoHappy::Path::HasFileExtension(inputFilePath, ".bin"))
 			return ReadAndWriteEncryptedAndOrCompressedBinToJsonFile(inputFilePath, namedKeys);
 

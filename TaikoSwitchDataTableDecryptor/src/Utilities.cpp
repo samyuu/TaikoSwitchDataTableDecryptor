@@ -260,7 +260,7 @@ namespace PeepoHappy
 		{
 			enum class Operation { Decrypt, Encrypt };
 
-			bool BCryptAes128Cbc(Operation operation, const u8* inData, size_t inDataSize, u8* outData, size_t outDataSize, u8* key, u8* iv)
+			bool BCryptAesCbc(Operation operation, const u8* inData, size_t inDataSize, u8* outData, size_t outDataSize, u8* key, size_t keySize, u8* iv)
 			{
 				bool successful = false;
 				::NTSTATUS status = {};
@@ -281,12 +281,12 @@ namespace PeepoHappy
 							::BCRYPT_KEY_HANDLE symmetricKeyHandle = {};
 							auto keyObject = std::make_unique<u8[]>(keyObjectSize);
 
-							status = ::BCryptGenerateSymmetricKey(algorithmHandle, &symmetricKeyHandle, keyObject.get(), keyObjectSize, key, static_cast<ULONG>(Aes128KeySize), 0);
+							status = ::BCryptGenerateSymmetricKey(algorithmHandle, &symmetricKeyHandle, keyObject.get(), keyObjectSize, key, static_cast<ULONG>(keySize), 0);
 							if (NT_SUCCESS(status))
 							{
 								if (operation == Operation::Decrypt)
 								{
-									status = ::BCryptDecrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(Aes128IVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
+									status = ::BCryptDecrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(AesIVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
 									if (NT_SUCCESS(status))
 										successful = true;
 									else
@@ -294,7 +294,7 @@ namespace PeepoHappy
 								}
 								else if (operation == Operation::Encrypt)
 								{
-									status = ::BCryptEncrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(Aes128IVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
+									status = ::BCryptEncrypt(symmetricKeyHandle, const_cast<u8*>(inData), static_cast<ULONG>(inDataSize), nullptr, iv, static_cast<ULONG>(AesIVSize), outData, static_cast<ULONG>(outDataSize), &copiedDataSize, 0);
 									if (NT_SUCCESS(status))
 										successful = true;
 									else
@@ -333,49 +333,76 @@ namespace PeepoHappy
 
 				return successful;
 			}
+
+			bool ParseHexByteString(std::string_view hexByteString, u8* outBytes, size_t outByteSize)
+			{
+				constexpr size_t hexDigitsPerByte = 2;
+				constexpr size_t byteBufferSize = 64;
+				assert(outByteSize < byteBufferSize);
+
+				char upperCaseHexChars[(byteBufferSize * hexDigitsPerByte) + sizeof('\0')] = {};
+				size_t hexCharsWrittenSoFar = 0;
+
+				for (size_t charIndex = 0; charIndex < hexByteString.size(); charIndex++)
+				{
+					if (ASCII::IsWhiteSpace(hexByteString[charIndex]))
+						continue;
+
+					const char upperCaseChar = ASCII::ToUpperCase(hexByteString[charIndex]);
+					upperCaseHexChars[hexCharsWrittenSoFar++] = ((upperCaseChar >= '0' && upperCaseChar <= '9') || (upperCaseChar >= 'A' && upperCaseChar <= 'F')) ? upperCaseChar : '0';
+
+					if (hexCharsWrittenSoFar >= std::size(upperCaseHexChars))
+						break;
+				}
+
+				for (size_t byteIndex = 0; byteIndex < outByteSize; byteIndex++)
+				{
+					auto upperCaseHexCharToNibble = [](char c) -> u8 { return (c >= '0' && c <= '9') ? (c - '0') : (c >= 'A' && c <= 'F') ? (0xA + (c - 'A')) : 0x0; };
+
+					u8 combinedByte = 0x00;
+					combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 0]) << 4);
+					combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 1]) << 0);
+					outBytes[byteIndex] = combinedByte;
+				}
+			
+				return true;
+			}
 		}
 
-		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv)
+		bool DecryptAes128Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes128KeyBytes key, AesIVBytes iv)
 		{
-			return Detail::BCryptAes128Cbc(Detail::Operation::Decrypt, inEncryptedData, inOutDataSize, outDecryptedData, inOutDataSize, key.data(), iv.data());
+			return Detail::BCryptAesCbc(Detail::Operation::Decrypt, inEncryptedData, inOutDataSize, outDecryptedData, inOutDataSize, key.data(), key.size(), iv.data());
 		}
 
-		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes128KeyBytes key, Aes128IVBytes iv)
+		bool EncryptAes128Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes128KeyBytes key, AesIVBytes iv)
 		{
-			assert(Align(inOutDataSize, Aes128Alignment) == inOutDataSize);
-			return Detail::BCryptAes128Cbc(Detail::Operation::Encrypt, inDecryptedData, inOutDataSize, outEncryptedData, inOutDataSize, key.data(), iv.data());
+			assert(Align(inOutDataSize, AesBlockAlignment) == inOutDataSize);
+			return Detail::BCryptAesCbc(Detail::Operation::Encrypt, inDecryptedData, inOutDataSize, outEncryptedData, inOutDataSize, key.data(), key.size(), iv.data());
+		}
+
+		bool DecryptAes256Cbc(const u8* inEncryptedData, u8* outDecryptedData, size_t inOutDataSize, Aes256KeyBytes key, AesIVBytes iv)
+		{
+			return Detail::BCryptAesCbc(Detail::Operation::Decrypt, inEncryptedData, inOutDataSize, outDecryptedData, inOutDataSize, key.data(), key.size(), iv.data());
+		}
+
+		bool EncryptAes256Cbc(const u8* inDecryptedData, u8* outEncryptedData, size_t inOutDataSize, Aes256KeyBytes key, AesIVBytes iv)
+		{
+			assert(Align(inOutDataSize, AesBlockAlignment) == inOutDataSize);
+			return Detail::BCryptAesCbc(Detail::Operation::Encrypt, inDecryptedData, inOutDataSize, outEncryptedData, inOutDataSize, key.data(), key.size(), iv.data());
 		}
 
 		Aes128KeyBytes ParseAes128KeyHexByteString(std::string_view hexByteString)
 		{
-			constexpr size_t hexDigitsPerByte = 2;
+			Aes128KeyBytes result = {};
+			Detail::ParseHexByteString(hexByteString, result.data(), result.size());
+			return result;
+		}
 
-			char upperCaseHexChars[(Aes128KeySize * hexDigitsPerByte) + sizeof('\0')] = {};
-			size_t hexCharsWrittenSoFar = 0;
-
-			for (size_t charIndex = 0; charIndex < hexByteString.size(); charIndex++)
-			{
-				if (ASCII::IsWhiteSpace(hexByteString[charIndex]))
-					continue;
-
-				const char upperCaseChar = ASCII::ToUpperCase(hexByteString[charIndex]);
-				upperCaseHexChars[hexCharsWrittenSoFar++] = ((upperCaseChar >= '0' && upperCaseChar <= '9') || (upperCaseChar >= 'A' && upperCaseChar <= 'F')) ? upperCaseChar : '0';
-
-				if (hexCharsWrittenSoFar >= std::size(upperCaseHexChars))
-					break;
-			}
-
-			Aes128KeyBytes resultKeyBytes = {};
-			for (size_t byteIndex = 0; byteIndex < resultKeyBytes.size(); byteIndex++)
-			{
-				auto upperCaseHexCharToNibble = [](char c) -> u8 { return (c >= '0' && c <= '9') ? (c - '0') : (c >= 'A' && c <= 'F') ? (0xA + (c - 'A')) : 0x0; };
-
-				u8 combinedByte = 0x00;
-				combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 0]) << 4);
-				combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 1]) << 0);
-				resultKeyBytes[byteIndex] = combinedByte;
-			}
-			return resultKeyBytes;
+		Aes256KeyBytes ParseAes256KeyHexByteString(std::string_view hexByteString)
+		{
+			Aes256KeyBytes result = {};
+			Detail::ParseHexByteString(hexByteString, result.data(), result.size());
+			return result;
 		}
 	}
 
@@ -406,11 +433,15 @@ namespace PeepoHappy
 			const GZipHeader* header = reinterpret_cast<const GZipHeader*>(fileContent);
 
 			// NOTE: This is by no means comprehensive but should be enough for datatable files and (not falsely) detecting encrypted data
+#if 1
 			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) &&
 				(header->CompressionMethod == Z_DEFLATED) &&
 				(header->Flags == 0) &&
 				(header->Timestamp == 0) &&
 				(header->ExtraFlags == 0);
+#else // DEBUG: Less precise check for FArc testing
+			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) && (header->CompressionMethod == Z_DEFLATED);
+#endif
 		}
 
 		bool Inflate(const u8* inCompressedData, size_t inDataSize, u8* outDecompressedData, size_t outDataSize)
@@ -431,7 +462,7 @@ namespace PeepoHappy
 			const int inflateResult = inflate(&zStream, Z_FINISH);
 			// BUG: I remember there being some edge case where it would report "incorrect end" or something desprite having already decompressed everything correctly..? 
 			//		Don't really wanna risk falsely reporting an error here...
-			assert(inflateResult == Z_STREAM_END && zStream.msg == nullptr);
+			// assert(inflateResult == Z_STREAM_END && zStream.msg == nullptr);
 
 			const int endResult = inflateEnd(&zStream);
 			if (endResult != Z_OK)
