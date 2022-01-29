@@ -364,7 +364,7 @@ namespace PeepoHappy
 					combinedByte |= (upperCaseHexCharToNibble(upperCaseHexChars[(byteIndex * hexDigitsPerByte) + 1]) << 0);
 					outBytes[byteIndex] = combinedByte;
 				}
-			
+
 				return true;
 			}
 		}
@@ -433,14 +433,15 @@ namespace PeepoHappy
 			const GZipHeader* header = reinterpret_cast<const GZipHeader*>(fileContent);
 
 			// NOTE: This is by no means comprehensive but should be enough for datatable files and (not falsely) detecting encrypted data
-#if 1
+#if 0
 			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) &&
 				(header->CompressionMethod == Z_DEFLATED) &&
 				(header->Flags == 0) &&
 				(header->Timestamp == 0) &&
 				(header->ExtraFlags == 0);
-#else // DEBUG: Less precise check for FArc testing
-			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) && (header->CompressionMethod == Z_DEFLATED);
+#else // NOTE: Less precise because becuase of some false negatives
+			return (header->Magic[0] == 0x1F && header->Magic[1] == 0x8B) &&
+				(header->CompressionMethod == Z_DEFLATED);
 #endif
 		}
 
